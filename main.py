@@ -2,6 +2,7 @@ from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
 from repository import PostgresTaskRepository
+from supabase_client import create_supabase_client
 
 app = FastAPI(
     title="Task API",
@@ -9,11 +10,14 @@ app = FastAPI(
     version="1.0",
 )
 repository = PostgresTaskRepository()
+supabase = None
 
 
 @app.on_event("startup")
 def initialize_database() -> None:
+    global supabase
     repository.initialize()
+    supabase = create_supabase_client()
 
 
 @app.get("/", summary="API Info")

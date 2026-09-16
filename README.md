@@ -1,8 +1,11 @@
-# Task API (Week 3 - A3 Containerize Your Stack)
+# Task API (Week 4 - Auth Login and Protect)
 
 A FastAPI CRUD API for a to-do list, now running with PostgreSQL in Docker.
 The public API remains the same as A2; only the storage implementation changed
 from SQLite to a PostgreSQL repository.
+
+W4 adds Supabase Auth configuration. Authentication routes and protected
+endpoints are added stage by stage.
 
 ## Stack
 
@@ -10,6 +13,7 @@ from SQLite to a PostgreSQL repository.
 - PostgreSQL 16
 - Docker Compose
 - Psycopg 3
+- Supabase Auth
 
 ## Configuration
 
@@ -20,8 +24,20 @@ Copy-Item .env.example .env
 ```
 
 `.env` is ignored by Git. It contains the local PostgreSQL credentials and
-connection string. `.env.example` is committed so another developer knows which
-variables are required.
+connection string, plus the Supabase project URL and anon key. `.env.example`
+is committed so another developer knows which variables are required.
+
+Create a Supabase project, then copy the values from **Project Settings ->
+API** into `.env`:
+
+```env
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_KEY=your-supabase-anon-key
+```
+
+The application creates the Supabase client during startup and fails with a
+clear configuration error if either value is missing. Never commit `.env` or
+real Supabase keys.
 
 ## Run the complete stack
 

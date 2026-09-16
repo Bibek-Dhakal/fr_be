@@ -18,6 +18,8 @@ services:
     build: .
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://tasks_user:tasks_password@db:5432/tasks_db}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
     ports:
       - "8000:8000"
     depends_on:
