@@ -1,5 +1,6 @@
 from fastapi import Depends, FastAPI, Header, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from repository import PostgresTaskRepository
 from supabase_client import create_supabase_client
@@ -11,6 +12,7 @@ app = FastAPI(
 )
 repository = PostgresTaskRepository()
 supabase = None
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def auth_error(message: str, status_code: int) -> JSONResponse:
@@ -35,10 +37,12 @@ def require_credentials(payload: dict) -> tuple[str, str] | JSONResponse:
     return email.strip(), password
 
 
-def get_current_user(authorization: str | None = Header(default=None)) -> dict:
-    token = extract_access_token(authorization)
-    if isinstance(token, JSONResponse):
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict:
+    if credentials is None or credentials.scheme.lower() != "bearer":
         raise AuthFailure("Access token required")
+    token = credentials.credentials
 
     try:
         response = supabase.auth.get_user(token)
