@@ -1,3 +1,5 @@
+import sqlite3
+
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
@@ -7,6 +9,66 @@ app = FastAPI(
     version="1.0"
 )
 
+
+# Stage 0: Database connection and initialization
+def get_db_connection():
+    conn = sqlite3.connect("tasks.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Create the tasks table if it doesn't exist
+    cursor.execute("""
+                   CREATE TABLE IF NOT EXISTS tasks
+                   (
+                       id
+                       INTEGER
+                       PRIMARY
+                       KEY
+                       AUTOINCREMENT,
+                       title
+                       TEXT
+                       NOT
+                       NULL,
+                       done
+                       BOOLEAN
+                       NOT
+                       NULL
+                       CHECK (
+                       done
+                       IN
+                   (
+                       0,
+                       1
+                   ))
+                       )
+                   """)
+    # Seed 3 example tasks only if the table is empty
+    cursor.execute("SELECT COUNT(*) FROM tasks")
+    if cursor.fetchone()[0] == 0:
+        cursor.executemany(
+            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            [("Buy milk", 0), ("Read a book", 1), ("Write some code", 0)]
+        )
+    conn.commit()
+    conn.close()
+
+
+# Run DB initialization on startup
+init_db()
+
+
+def row_to_dict(row):
+    """Helper to convert sqlite3.Row to a dict and map 0/1 to False/True."""
+    d = dict(row)
+    d["done"] = bool(d["done"])
+    return d
+
+
+# Temporary in-memory list (will be replaced in upcoming stages)
 tasks = [
     {"id": 1, "title": "Buy milk", "done": False},
     {"id": 2, "title": "Read a book", "done": True},
@@ -81,5 +143,5 @@ def delete_task(task_id: int):
         if task["id"] == task_id:
             del tasks[i]
             return None
-
+        
     return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})

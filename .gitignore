@@ -27,3 +27,7 @@ coverage.xml
 *.sublime-workspace
 .DS_Store
 PATCH.md
+
+# Database
+tasks.db
+
