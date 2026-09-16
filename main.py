@@ -1,4 +1,4 @@
-from fastapi import FastAPI, status
+from fastapi import FastAPI, Header, status
 from fastapi.responses import JSONResponse
 
 from repository import PostgresTaskRepository
@@ -79,6 +79,31 @@ def login(payload: dict):
         "access_token": response.session.access_token,
         "refresh_token": response.session.refresh_token,
     }
+
+
+def extract_access_token(authorization: str | None) -> str | JSONResponse:
+    if not authorization or not authorization.startswith("Bearer "):
+        return auth_error("Access token required", 401)
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        return auth_error("Access token required", 401)
+    return token
+
+
+@app.get("/public/info", summary="Public Information")
+def public_info():
+    """Returns information that does not require authentication."""
+    return {"message": "Welcome stranger! This info is public."}
+
+
+@app.get("/protected/profile", summary="Protected Profile")
+def protected_profile(authorization: str | None = Header(default=None)):
+    """Checks for a bearer token without verifying it yet."""
+    token = extract_access_token(authorization)
+    if isinstance(token, JSONResponse):
+        return token
+    return {"message": "Protected profile", "access_token_present": bool(token)}
 
 
 @app.get("/", summary="API Info")
