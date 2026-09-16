@@ -85,9 +85,54 @@ the service/API behavior stays stable while the repository changes.
 | Create | `POST` | `/tasks` | Creates a task |
 | Update | `PUT` | `/tasks/{id}` | Updates a task |
 | Delete | `DELETE` | `/tasks/{id}` | Deletes a task |
+| Sign up | `POST` | `/auth/signup` | Creates a Supabase user |
+| Log in | `POST` | `/auth/login` | Returns access and refresh tokens |
+| Log out | `POST` | `/auth/logout` | Protected; signs out the current session |
+| Public info | `GET` | `/public/info` | Public, no token required |
+| Profile | `GET` | `/protected/profile` | Protected; verifies the bearer token |
+| Dashboard | `GET` | `/protected/dashboard` | Protected; verifies the bearer token |
 
 Unknown IDs return `404` with `{"error": "Task {id} not found"}`. Missing or
 empty titles return `400`.
+
+Protected endpoints require:
+
+```text
+Authorization: Bearer <access_token>
+```
+
+Missing or malformed tokens return `401` with
+`{"error": "Access token required"}`. Invalid or expired tokens return `401`
+with `{"error": "Invalid or expired token"}`.
+
+## Auth flow
+
+Sign up:
+
+```powershell
+curl.exe -i -X POST http://localhost:8000/auth/signup `
+  -H "Content-Type: application/json" `
+  -d '{"email":"test@example.com","password":"password123"}'
+```
+
+Log in and copy the returned `access_token`:
+
+```powershell
+curl.exe -i -X POST http://localhost:8000/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{"email":"test@example.com","password":"password123"}'
+```
+
+Use the token with the protected profile route:
+
+```powershell
+curl.exe -i http://localhost:8000/protected/profile `
+  -H "Authorization: Bearer <access_token>"
+```
+
+Swagger UI at `/docs` includes the **Authorize** button and bearer security
+metadata for `/protected/profile`, `/protected/dashboard`, and
+`/auth/logout`.
 
 ## Persistence proof
 
@@ -124,6 +169,16 @@ empty titles return `400`.
 The task remains because PostgreSQL data is stored in the `postgres_data`
 Docker volume. Do not use `docker compose down -v` during this persistence
 test because that deliberately removes the database.
+
+## W4 stage summary
+
+- Stage 0: Supabase client and environment configuration
+- Stage 1: signup and login routes
+- Stage 2: public route and bearer-header protection
+- Stage 3: Supabase token verification
+- Stage 4: reusable auth dependency and logout
+- Stage 5: Swagger bearer authorization
+- Stage 6: this README and GitHub publication
 
 ## Previous A2 artifacts
 
