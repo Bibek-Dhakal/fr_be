@@ -1,97 +1,112 @@
-# Task API (Week 2 - A1 CRUD Assignment)
+# Task API (Week 3 - A2 Connecting to the Database)
 
-This is a simple, in-memory CRUD (Create, Read, Update, Delete) API for managing a to-do list, built using Python and
-FastAPI.
+A CRUD API for managing a to-do list, built with Python, FastAPI, and SQLite.
+The API keeps the same endpoints and response shapes as the in-memory version,
+but tasks now persist across server restarts.
 
-## How to Install & Run
+## Why SQLite?
 
-1. **Create and activate a virtual environment:**
-   ```bash
-   python -m venv venv
-   # Windows:
-   venv\Scripts\activate
-   # macOS/Linux:
-   source venv/bin/activate
-   ```
+SQLite is lightweight, serverless, and stores the database in one local file.
+It requires no separate database server or setup, making it a good fit for this
+assignment while still providing real SQL persistence.
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.min.txt
-   ```
+## Database
 
-3. **Start the development server:**
-   ```bash
-   uvicorn main:app --reload --port 8000
-   ```
+The database file is `tasks.db` in the project root. On startup, the application:
 
-## Endpoints Table
+1. Creates the `tasks` table if it does not exist.
+2. Inserts three example tasks only when the table is empty.
 
-| Operation | Method   | Endpoint      | Description                              |
-|-----------|----------|---------------|------------------------------------------|
-| Meta      | `GET`    | `/`           | Returns API info                         |
-| Meta      | `GET`    | `/health`     | Health check endpoint                    |
-| Read      | `GET`    | `/tasks`      | List all tasks                           |
-| Read      | `GET`    | `/tasks/{id}` | Get a specific task by ID                |
-| Create    | `POST`   | `/tasks`      | Add a new task                           |
-| Update    | `PUT`    | `/tasks/{id}` | Update task details (title, done status) |
-| Delete    | `DELETE` | `/tasks/{id}` | Remove a task                            |
+The database file is ignored by Git so each clone creates its own local
+database automatically.
 
-## Example Request
+## Install and run
 
-**Create a new task:**
-
-for Windows PowerShell, use the following command:
+Create and activate a virtual environment:
 
 ```bash
-curl.exe -i -X POST http://localhost:8000/tasks -H "Content-Type: application/json" -d "@test_data/task_post_body.json"
+python -m venv venv
 ```
 
-for macOS/Linux, use the following command:
+Windows PowerShell:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+macOS/Linux:
 
 ```bash
-curl -i -X POST http://localhost:8000/tasks -H "Content-Type: application/json" -d "@test_data/task_post_body.json"
+source venv/bin/activate
 ```
 
-**Output:**
+Install dependencies and start the server:
 
-```http
-HTTP/1.1 201 Created
-date: Wed, 16 Sep 2026 12:16:56 GMT
-server: uvicorn
-content-length: 40
-content-type: application/json
-
-{"id":4,"title":"Buy milk","done":false}
+```bash
+pip install -r requirements.min.txt
+uvicorn main:app --reload --port 8000
 ```
+
+The interactive API documentation is available at
+[http://localhost:8000/docs](http://localhost:8000/docs).
+
+## Endpoints
+
+| Operation    | Method   | Endpoint      | Description             |
+|--------------|----------|---------------|-------------------------|
+| API info     | `GET`    | `/`           | Returns API information |
+| Health check | `GET`    | `/health`     | Returns service health  |
+| List         | `GET`    | `/tasks`      | Returns all tasks       |
+| Read         | `GET`    | `/tasks/{id}` | Returns one task        |
+| Create       | `POST`   | `/tasks`      | Creates a task          |
+| Update       | `PUT`    | `/tasks/{id}` | Updates a task          |
+| Delete       | `DELETE` | `/tasks/{id}` | Deletes a task          |
+
+Unknown task IDs return `404` with an error object. Missing or empty titles
+return `400`.
+
+## Example request
+
+Windows PowerShell:
+
+```powershell
+curl.exe -i -X POST http://localhost:8000/tasks `
+  -H "Content-Type: application/json" `
+  -d "@test_data/task_post_body.json"
+```
+
+macOS/Linux:
+
+```bash
+curl -i -X POST http://localhost:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d "@test_data/task_post_body.json"
+```
+
+## SQL explored in Stage 4
+
+The database was opened in DB Browser for SQLite and the following queries
+were executed:
+
+```sql
+SELECT *
+FROM tasks;
+SELECT *
+FROM tasks
+WHERE done = 1;
+SELECT COUNT(*)
+FROM tasks;
+UPDATE tasks
+SET done = 1;
+DELETE
+FROM tasks
+WHERE done = 1;
+```
+
+Screenshot from the database viewer:
+
+![DB Browser for SQLite](./db_browser_screenshot.jpeg)
 
 ## Swagger UI
 
-FastAPI automatically generates a Swagger UI interface. Once the server is running, visit:
-[http://localhost:8000/docs](http://localhost:8000/docs)
-
-*(Screenshot of Swagger UI)*
 ![Swagger UI Screenshot](./swagger_screenshot.jpeg)
-
----
-
-## Stage 7: AI vs. Me
-
-**Prompt I used for the AI:**
-> "Build a FastAPI CRUD app for a to-do list with in-memory storage, input validation, and specific 400/404 error
-> messages. Title is required and cannot be empty. Follow REST best practices. Output the code."
-
-**What the AI did better (and what I understood):**
-The AI used FastAPI's `Pydantic` `BaseModel` pattern strictly, which gives you built-in type validation and OpenAPI
-schema generation for request bodies out of the box. I used plain dictionaries (`payload: dict`) for closer manual
-control over the `400` status requirements.
-
-**What it got wrong or quietly ignored:**
-Because the AI used `Pydantic`, passing missing JSON fields automatically throws a `422 Unprocessable Entity` response,
-rather than the `400 Bad Request` explicitly requested in the prompt and assignment instructions. It also structured the
-404 response payloads as `{"detail": "Task not found"}` because of `HTTPException`, ignoring the assignment's explicit
-rule to return `{"error": "Task not found"}`.
-
-**What my prompt forgot to specify & what the AI decided silently:**
-I forgot to specify the exact schema shape (`{"error": "message"}`) and how to handle updates (`PUT`). The AI silently
-completely skipped implementing the `PUT` endpoint because I didn't explicitly ask for it to do an "Update" route. It
-also created a global `current_id` variable instead of deriving the next ID dynamically from the array.
