@@ -63,14 +63,6 @@ def row_to_dict(row):
     return d
 
 
-# Temporary in-memory list (will be completely removed in stage 3)
-tasks = [
-    {"id": 1, "title": "Buy milk", "done": False},
-    {"id": 2, "title": "Read a book", "done": True},
-    {"id": 3, "title": "Write some code", "done": False}
-]
-
-
 @app.get("/", summary="API Info")
 def root():
     """Returns the API description and available endpoints."""
@@ -118,12 +110,10 @@ def create_task(payload: dict):
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Insert new record using parameterized queries to prevent SQL injection
     cursor.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (str(title).strip(), 0))
     conn.commit()
     new_id = cursor.lastrowid
 
-    # Fetch the newly created record
     cursor.execute("SELECT * FROM tasks WHERE id = ?", (new_id,))
     new_task = row_to_dict(cursor.fetchone())
     conn.close()
@@ -133,30 +123,61 @@ def create_task(payload: dict):
 
 @app.put("/tasks/{task_id}", summary="Update Task")
 def update_task(task_id: int, payload: dict):
-    """Updates an existing task's title or done status."""
+    """Updates an existing task's title or done status in the database."""
     if not payload:
         return JSONResponse(status_code=400, content={"error": "Request body is empty"})
 
-    for task in tasks:
-        if task["id"] == task_id:
-            if "title" in payload:
-                title = payload["title"]
-                if not title or not str(title).strip():
-                    return JSONResponse(status_code=400, content={"error": "Title is missing or empty"})
-                task["title"] = str(title).strip()
-            if "done" in payload:
-                task["done"] = bool(payload["done"])
-            return task
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
+    # Check if task exists first
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
+
+    current_task = row_to_dict(row)
+    new_title = current_task["title"]
+    new_done = current_task["done"]
+
+    if "title" in payload:
+        title = payload["title"]
+        if not title or not str(title).strip():
+            conn.close()
+            return JSONResponse(status_code=400, content={"error": "Title is missing or empty"})
+        new_title = str(title).strip()
+
+    if "done" in payload:
+        new_done = bool(payload["done"])
+
+    cursor.execute(
+        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+        (new_title, int(new_done), task_id)
+    )
+    conn.commit()
+
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    updated_task = row_to_dict(cursor.fetchone())
+    conn.close()
+
+    return updated_task
 
 
 @app.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete Task")
 def delete_task(task_id: int):
-    """Deletes a task by ID."""
-    for i, task in enumerate(tasks):
-        if task["id"] == task_id:
-            del tasks[i]
-            return None
-        
-    return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
+    """Deletes a task by ID from the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM tasks WHERE id = ?", (task_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
+
+    cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+
+    return None
