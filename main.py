@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, status
+from fastapi import Depends, FastAPI, Header, Request, status
 from fastapi.responses import JSONResponse
 
 from repository import PostgresTaskRepository
@@ -17,6 +17,11 @@ def auth_error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": message})
 
 
+class AuthFailure(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
 def require_credentials(payload: dict) -> tuple[str, str] | JSONResponse:
     email = payload.get("email")
     password = payload.get("password")
@@ -30,11 +35,31 @@ def require_credentials(payload: dict) -> tuple[str, str] | JSONResponse:
     return email.strip(), password
 
 
+def get_current_user(authorization: str | None = Header(default=None)) -> dict:
+    token = extract_access_token(authorization)
+    if isinstance(token, JSONResponse):
+        raise AuthFailure("Access token required")
+
+    try:
+        response = supabase.auth.get_user(token)
+    except Exception:
+        raise AuthFailure("Invalid or expired token")
+
+    if response.user is None:
+        raise AuthFailure("Invalid or expired token")
+    return {"token": token, "user": response.user}
+
+
 @app.on_event("startup")
 def initialize_database() -> None:
     global supabase
     repository.initialize()
     supabase = create_supabase_client()
+
+
+@app.exception_handler(AuthFailure)
+def auth_failure_handler(_request: Request, exc: AuthFailure):
+    return auth_error(exc.message, 401)
 
 
 @app.post("/auth/signup", status_code=status.HTTP_201_CREATED, summary="Sign Up")
@@ -98,26 +123,30 @@ def public_info():
 
 
 @app.get("/protected/profile", summary="Protected Profile")
-def protected_profile(authorization: str | None = Header(default=None)):
-    """Verifies a bearer token and returns the authenticated user's profile."""
-    token = extract_access_token(authorization)
-    if isinstance(token, JSONResponse):
-        return token
-
-    try:
-        response = supabase.auth.get_user(token)
-    except Exception:
-        return auth_error("Invalid or expired token", 401)
-
-    user = response.user
-    if user is None:
-        return auth_error("Invalid or expired token", 401)
-
+def protected_profile(current_user: dict = Depends(get_current_user)):
+    """Returns the authenticated user's profile."""
+    user = current_user["user"]
     return {
         "id": user.id,
         "email": user.email,
         "created_at": user.created_at,
     }
+
+
+@app.get("/protected/dashboard", summary="Protected Dashboard")
+def protected_dashboard(_current_user: dict = Depends(get_current_user)):
+    """Returns a protected dashboard response."""
+    return {"message": "Welcome to your protected dashboard."}
+
+
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, summary="Log Out")
+def logout(current_user: dict = Depends(get_current_user)):
+    """Terminates the current Supabase session."""
+    try:
+        supabase.auth.sign_out(current_user["token"])
+    except Exception:
+        return auth_error("Unable to log out", 401)
+    return None
 
 
 @app.get("/", summary="API Info")
