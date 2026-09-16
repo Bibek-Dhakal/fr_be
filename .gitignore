@@ -31,3 +31,7 @@ PATCH.md
 # Database
 tasks.db
 
+# Environment
+.env
+.env.*
+!.env.example

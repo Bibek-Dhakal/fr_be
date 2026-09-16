@@ -1,112 +1,115 @@
-# Task API (Week 3 - A2 Connecting to the Database)
+# Task API (Week 3 - A3 Containerize Your Stack)
 
-A CRUD API for managing a to-do list, built with Python, FastAPI, and SQLite.
-The API keeps the same endpoints and response shapes as the in-memory version,
-but tasks now persist across server restarts.
+A FastAPI CRUD API for a to-do list, now running with PostgreSQL in Docker.
+The public API remains the same as A2; only the storage implementation changed
+from SQLite to a PostgreSQL repository.
 
-## Why SQLite?
+## Stack
 
-SQLite is lightweight, serverless, and stores the database in one local file.
-It requires no separate database server or setup, making it a good fit for this
-assignment while still providing real SQL persistence.
+- FastAPI
+- PostgreSQL 16
+- Docker Compose
+- Psycopg 3
 
-## Database
+## Configuration
 
-The database file is `tasks.db` in the project root. On startup, the application:
-
-1. Creates the `tasks` table if it does not exist.
-2. Inserts three example tasks only when the table is empty.
-
-The database file is ignored by Git so each clone creates its own local
-database automatically.
-
-## Install and run
-
-Create and activate a virtual environment:
-
-```bash
-python -m venv venv
-```
-
-Windows PowerShell:
+Copy the example environment file:
 
 ```powershell
-.\venv\Scripts\Activate.ps1
+Copy-Item .env.example .env
 ```
 
-macOS/Linux:
+`.env` is ignored by Git. It contains the local PostgreSQL credentials and
+connection string. `.env.example` is committed so another developer knows which
+variables are required.
 
-```bash
-source venv/bin/activate
+## Run the complete stack
+
+Install Docker Desktop, then run:
+
+```powershell
+docker compose up --build
 ```
 
-Install dependencies and start the server:
+The API is available at [http://localhost:8000](http://localhost:8000), and
+Swagger UI is available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-```bash
-pip install -r requirements.min.txt
-uvicorn main:app --reload --port 8000
+The `db` service uses the named `postgres_data` volume. The `app` service waits
+for PostgreSQL to become healthy before starting. `schema.sql` creates the
+`tasks` table and inserts the three example tasks only when the table is empty.
+
+Stop the stack without deleting data:
+
+```powershell
+docker compose down
 ```
 
-The interactive API documentation is available at
-[http://localhost:8000/docs](http://localhost:8000/docs).
+To intentionally delete the persisted database volume:
+
+```powershell
+docker compose down -v
+```
+
+## A3 architecture
+
+The route handlers in `main.py` keep the same endpoint paths, request
+validation, response shapes, and status codes as A2. They call the
+`PostgresTaskRepository` in `repository.py` instead of executing database
+queries themselves. This is the storage swap required by the assignment:
+the service/API behavior stays stable while the repository changes.
 
 ## Endpoints
 
-| Operation    | Method   | Endpoint      | Description             |
-|--------------|----------|---------------|-------------------------|
-| API info     | `GET`    | `/`           | Returns API information |
-| Health check | `GET`    | `/health`     | Returns service health  |
-| List         | `GET`    | `/tasks`      | Returns all tasks       |
-| Read         | `GET`    | `/tasks/{id}` | Returns one task        |
-| Create       | `POST`   | `/tasks`      | Creates a task          |
-| Update       | `PUT`    | `/tasks/{id}` | Updates a task          |
-| Delete       | `DELETE` | `/tasks/{id}` | Deletes a task          |
+| Operation | Method | Endpoint | Description |
+| --- | --- | --- | --- |
+| API info | `GET` | `/` | Returns API information |
+| Health check | `GET` | `/health` | Returns service health |
+| List | `GET` | `/tasks` | Returns all tasks |
+| Read | `GET` | `/tasks/{id}` | Returns one task |
+| Create | `POST` | `/tasks` | Creates a task |
+| Update | `PUT` | `/tasks/{id}` | Updates a task |
+| Delete | `DELETE` | `/tasks/{id}` | Deletes a task |
 
-Unknown task IDs return `404` with an error object. Missing or empty titles
-return `400`.
+Unknown IDs return `404` with `{"error": "Task {id} not found"}`. Missing or
+empty titles return `400`.
 
-## Example request
+## Persistence proof
 
-Windows PowerShell:
+1. Start the stack with `docker compose up --build`.
+2. Create a task through Swagger UI or with:
 
-```powershell
-curl.exe -i -X POST http://localhost:8000/tasks `
-  -H "Content-Type: application/json" `
-  -d "@test_data/task_post_body.json"
-```
+   ```powershell
+   curl.exe -i -X POST http://localhost:8000/tasks `
+     -H "Content-Type: application/json" `
+     -d '{"title":"Survives restart"}'
+   ```
 
-macOS/Linux:
+3. Stop only the application:
 
-```bash
-curl -i -X POST http://localhost:8000/tasks \
-  -H "Content-Type: application/json" \
-  -d "@test_data/task_post_body.json"
-```
+   ```powershell
+   docker compose stop app
+   ```
 
-## SQL explored in Stage 4
+4. Restart the application and confirm the task remains:
 
-The database was opened in DB Browser for SQLite and the following queries
-were executed:
+   ```powershell
+   docker compose start app
+   curl.exe http://localhost:8000/tasks
+   ```
 
-```sql
-SELECT *
-FROM tasks;
-SELECT *
-FROM tasks
-WHERE done = 1;
-SELECT COUNT(*)
-FROM tasks;
-UPDATE tasks
-SET done = 1;
-DELETE
-FROM tasks
-WHERE done = 1;
-```
+5. Restart both containers without removing the volume:
 
-Screenshot from the database viewer:
+   ```powershell
+   docker compose down
+   docker compose up --build
+   curl.exe http://localhost:8000/tasks
+   ```
 
-![DB Browser for SQLite](./db_browser_screenshot.jpeg)
+The task remains because PostgreSQL data is stored in the `postgres_data`
+Docker volume. Do not use `docker compose down -v` during this persistence
+test because that deliberately removes the database.
 
-## Swagger UI
+## Previous A2 artifacts
 
-![Swagger UI Screenshot](./swagger_screenshot.jpeg)
+The repository retains the A2 SQLite artifacts and screenshots in Git history.
+The active A3 stack uses PostgreSQL and Docker Compose.
