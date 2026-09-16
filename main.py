@@ -99,11 +99,25 @@ def public_info():
 
 @app.get("/protected/profile", summary="Protected Profile")
 def protected_profile(authorization: str | None = Header(default=None)):
-    """Checks for a bearer token without verifying it yet."""
+    """Verifies a bearer token and returns the authenticated user's profile."""
     token = extract_access_token(authorization)
     if isinstance(token, JSONResponse):
         return token
-    return {"message": "Protected profile", "access_token_present": bool(token)}
+
+    try:
+        response = supabase.auth.get_user(token)
+    except Exception:
+        return auth_error("Invalid or expired token", 401)
+
+    user = response.user
+    if user is None:
+        return auth_error("Invalid or expired token", 401)
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "created_at": user.created_at,
+    }
 
 
 @app.get("/", summary="API Info")
