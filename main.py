@@ -10,7 +10,6 @@ app = FastAPI(
 )
 
 
-# Stage 0: Database connection and initialization
 def get_db_connection():
     conn = sqlite3.connect("tasks.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -20,7 +19,6 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Create the tasks table if it doesn't exist
     cursor.execute("""
                    CREATE TABLE IF NOT EXISTS tasks
                    (
@@ -46,7 +44,6 @@ def init_db():
                    ))
                        )
                    """)
-    # Seed 3 example tasks only if the table is empty
     cursor.execute("SELECT COUNT(*) FROM tasks")
     if cursor.fetchone()[0] == 0:
         cursor.executemany(
@@ -57,18 +54,16 @@ def init_db():
     conn.close()
 
 
-# Run DB initialization on startup
 init_db()
 
 
 def row_to_dict(row):
-    """Helper to convert sqlite3.Row to a dict and map 0/1 to False/True."""
     d = dict(row)
     d["done"] = bool(d["done"])
     return d
 
 
-# Temporary in-memory list (will be replaced in upcoming stages)
+# Temporary in-memory list (will be completely removed in stage 3)
 tasks = [
     {"id": 1, "title": "Buy milk", "done": False},
     {"id": 2, "title": "Read a book", "done": True},
@@ -90,16 +85,27 @@ def health():
 
 @app.get("/tasks", summary="List Tasks")
 def get_tasks():
-    """Returns the complete list of tasks."""
-    return tasks
+    """Returns the complete list of tasks from the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row_to_dict(row) for row in rows]
 
 
 @app.get("/tasks/{task_id}", summary="Get Single Task")
 def get_task(task_id: int):
-    """Returns a specific task by ID."""
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
+    """Returns a specific task by ID from the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return row_to_dict(row)
+
     return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
 
 
