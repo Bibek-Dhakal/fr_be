@@ -71,3 +71,27 @@ FastAPI automatically generates a Swagger UI interface. Once the server is runni
 
 *(Screenshot of Swagger UI)*
 ![Swagger UI Screenshot](./swagger_screenshot.jpeg)
+
+---
+
+## Stage 7: AI vs. Me
+
+**Prompt I used for the AI:**
+> "Build a FastAPI CRUD app for a to-do list with in-memory storage, input validation, and specific 400/404 error
+> messages. Title is required and cannot be empty. Follow REST best practices. Output the code."
+
+**What the AI did better (and what I understood):**
+The AI used FastAPI's `Pydantic` `BaseModel` pattern strictly, which gives you built-in type validation and OpenAPI
+schema generation for request bodies out of the box. I used plain dictionaries (`payload: dict`) for closer manual
+control over the `400` status requirements.
+
+**What it got wrong or quietly ignored:**
+Because the AI used `Pydantic`, passing missing JSON fields automatically throws a `422 Unprocessable Entity` response,
+rather than the `400 Bad Request` explicitly requested in the prompt and assignment instructions. It also structured the
+404 response payloads as `{"detail": "Task not found"}` because of `HTTPException`, ignoring the assignment's explicit
+rule to return `{"error": "Task not found"}`.
+
+**What my prompt forgot to specify & what the AI decided silently:**
+I forgot to specify the exact schema shape (`{"error": "message"}`) and how to handle updates (`PUT`). The AI silently
+completely skipped implementing the `PUT` endpoint because I didn't explicitly ask for it to do an "Update" route. It
+also created a global `current_id` variable instead of deriving the next ID dynamically from the array.
