@@ -13,11 +13,72 @@ repository = PostgresTaskRepository()
 supabase = None
 
 
+def auth_error(message: str, status_code: int) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": message})
+
+
+def require_credentials(payload: dict) -> tuple[str, str] | JSONResponse:
+    email = payload.get("email")
+    password = payload.get("password")
+    if (
+        not isinstance(email, str)
+        or not email.strip()
+        or not isinstance(password, str)
+        or not password
+    ):
+        return auth_error("Email and password are required", 400)
+    return email.strip(), password
+
+
 @app.on_event("startup")
 def initialize_database() -> None:
     global supabase
     repository.initialize()
     supabase = create_supabase_client()
+
+
+@app.post("/auth/signup", status_code=status.HTTP_201_CREATED, summary="Sign Up")
+def signup(payload: dict):
+    """Creates a Supabase user account."""
+    credentials = require_credentials(payload)
+    if isinstance(credentials, JSONResponse):
+        return credentials
+
+    email, password = credentials
+    try:
+        response = supabase.auth.sign_up(
+            {"email": email, "password": password}
+        )
+    except Exception:
+        return auth_error("Unable to create account", 400)
+
+    if response.user is None:
+        return auth_error("Unable to create account", 400)
+    return {"user": response.user}
+
+
+@app.post("/auth/login", summary="Log In")
+def login(payload: dict):
+    """Authenticates a user with Supabase and returns session tokens."""
+    credentials = require_credentials(payload)
+    if isinstance(credentials, JSONResponse):
+        return credentials
+
+    email, password = credentials
+    try:
+        response = supabase.auth.sign_in_with_password(
+            {"email": email, "password": password}
+        )
+    except Exception:
+        return auth_error("Invalid login credentials", 401)
+
+    if response.session is None:
+        return auth_error("Invalid login credentials", 401)
+
+    return {
+        "access_token": response.session.access_token,
+        "refresh_token": response.session.refresh_token,
+    }
 
 
 @app.get("/", summary="API Info")
