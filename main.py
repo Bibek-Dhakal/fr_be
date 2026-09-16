@@ -111,14 +111,23 @@ def get_task(task_id: int):
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED, summary="Create Task")
 def create_task(payload: dict):
-    """Creates a new task. Title is required."""
+    """Creates a new task in the database. Title is required."""
     title = payload.get("title")
     if not title or not str(title).strip():
         return JSONResponse(status_code=400, content={"error": "Title is missing or empty"})
 
-    new_id = max([t["id"] for t in tasks], default=0) + 1
-    new_task = {"id": new_id, "title": str(title).strip(), "done": False}
-    tasks.append(new_task)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Insert new record using parameterized queries to prevent SQL injection
+    cursor.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", (str(title).strip(), 0))
+    conn.commit()
+    new_id = cursor.lastrowid
+
+    # Fetch the newly created record
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (new_id,))
+    new_task = row_to_dict(cursor.fetchone())
+    conn.close()
+
     return new_task
 
 
