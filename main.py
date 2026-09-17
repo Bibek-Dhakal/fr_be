@@ -8,6 +8,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from repository import PostgresTaskRepository
 from supabase_client import create_supabase_client
 from llm.client import complete_triage
+from llm.client import PROMPT_VERSION
+from llm.parse import parse_triage_output
+from llm.quarantine import quarantine_triage
 from llm.schema import TriageRequest, TriageResult
 
 app = FastAPI(
@@ -135,7 +138,28 @@ def triage(payload: dict):
             reason="Stub mode is enabled; human review is required.",
         )
     try:
-        return {"raw_model_output": complete_triage(request.text)}
+        raw_output = complete_triage(request.text)
+        try:
+            return parse_triage_output(raw_output)
+        except ValueError as first_error:
+            repaired_output = complete_triage(
+                request.text,
+                previous_output=raw_output,
+                validation_error=str(first_error),
+            )
+            try:
+                return parse_triage_output(repaired_output)
+            except ValueError as final_error:
+                quarantine_triage(
+                    request.text,
+                    repaired_output,
+                    str(final_error),
+                    PROMPT_VERSION,
+                )
+                return JSONResponse(
+                    status_code=422,
+                    content={"error": "Model output could not be validated"},
+                )
     except Exception as error:
         return JSONResponse(status_code=502, content={"error": str(error)})
 
