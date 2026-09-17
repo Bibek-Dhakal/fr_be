@@ -1,11 +1,12 @@
-# Task API (Week 4 - Auth Login and Protect)
+# Task API (Week 7 - Connect to an AI API)
 
 A FastAPI CRUD API for a to-do list, now running with PostgreSQL in Docker.
 The public API remains the same as A2; only the storage implementation changed
 from SQLite to a PostgreSQL repository.
 
-W4 adds Supabase Auth configuration. Authentication routes and protected
-endpoints are added stage by stage.
+The project now includes a narrow AI workflow: `POST /triage` classifies one
+support message into a fixed, validated JSON result. The existing PostgreSQL,
+Docker, and Supabase authentication features remain available.
 
 ## Stack
 
@@ -14,6 +15,7 @@ endpoints are added stage by stage.
 - Docker Compose
 - Psycopg 3
 - Supabase Auth
+- Gemini through its OpenAI-compatible API
 
 ## Configuration
 
@@ -38,6 +40,18 @@ SUPABASE_KEY=your-supabase-anon-key
 The application creates the Supabase client during startup and fails with a
 clear configuration error if either value is missing. Never commit `.env` or
 real Supabase keys.
+
+The LLM provider is configured with three environment variables:
+
+```env
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+LLM_API_KEY=your-gemini-api-key
+LLM_MODEL=gemini-3.6-flash
+```
+
+Changing those three values is enough to use another OpenAI-compatible
+provider. `LLM_ENABLED=false` disables model calls and returns a deterministic
+low-confidence `other` result.
 
 ## Run the complete stack
 
@@ -91,6 +105,7 @@ the service/API behavior stays stable while the repository changes.
 | Public info | `GET` | `/public/info` | Public, no token required |
 | Profile | `GET` | `/protected/profile` | Protected; verifies the bearer token |
 | Dashboard | `GET` | `/protected/dashboard` | Protected; verifies the bearer token |
+| Triage | `POST` | `/triage` | Classifies a support message with validated JSON |
 
 Unknown IDs return `404` with `{"error": "Task {id} not found"}`. Missing or
 empty titles return `400`.
@@ -133,6 +148,61 @@ curl.exe -i http://localhost:8000/protected/profile `
 Swagger UI at `/docs` includes the **Authorize** button and bearer security
 metadata for `/protected/profile`, `/protected/dashboard`, and
 `/auth/logout`.
+
+## AI triage
+
+`POST /triage` accepts:
+
+```json
+{"text":"The dashboard crashes every time I click Save."}
+```
+
+and returns:
+
+```json
+{
+  "category": "bug",
+  "urgency": "high",
+  "confidence": 0.94,
+  "reason": "The customer reports a repeatable dashboard failure."
+}
+```
+
+Run it with:
+
+```powershell
+curl.exe -i -X POST http://localhost:8000/triage `
+  -H "Content-Type: application/json" `
+  -d '{"text":"The dashboard crashes every time I click Save."}'
+```
+
+Invalid input is rejected with `400` before a model call. Model output is
+parsed and validated against `llm/schema.py`; malformed output gets exactly one
+repair attempt, then returns `422` and is written to
+`logs/quarantine.jsonl`. Model calls use a 30-second timeout, no SDK retries,
+and application retries only timeouts, `429`, and `5xx` responses with
+bounded exponential backoff.
+
+Each model response writes prompt version, model, token counts, duration, and
+repair status to `logs/cost.jsonl`. The logs are ignored by Git.
+
+## Evaluation
+
+The eight labelled cases are in `evals/cases.json`. Run the live evaluation
+after configuring Gemini:
+
+```powershell
+.\.venv\Scripts\python.exe evals\run.py
+```
+
+The result must be recorded here with the date and prompt version after the
+run.
+
+**Evaluation result (2026-09-17, prompt `triage-v1`):** `6/8` category
+matches (`75%`). The final two cases were blocked by Gemini's free-tier
+per-minute quota after five requests, so this is a quota-limited result rather
+than a claim that all eight model judgements were successful. The two failed
+requests were recorded by the runner as provider `429` errors.
 
 ## Persistence proof
 
