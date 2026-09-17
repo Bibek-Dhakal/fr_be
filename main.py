@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, Header, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from openai import APITimeoutError
 
 from repository import PostgresTaskRepository
 from supabase_client import create_supabase_client
@@ -118,7 +119,11 @@ def login(payload: dict):
     }
 
 
-@app.post("/triage", summary="Triage Support Message")
+@app.post(
+    "/triage",
+    response_model=TriageResult,
+    summary="Triage Support Message",
+)
 def triage(payload: dict):
     """Classifies a support message into a closed, validated result shape."""
     try:
@@ -161,6 +166,11 @@ def triage(payload: dict):
                     status_code=422,
                     content={"error": "Model output could not be validated"},
                 )
+    except APITimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={"error": "The AI provider timed out"},
+        )
     except Exception as error:
         return JSONResponse(status_code=502, content={"error": str(error)})
 
