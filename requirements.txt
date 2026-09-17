@@ -25,6 +25,8 @@ httpx==0.28.1
 httpx2==2.13.0
 hyperframe==6.1.0
 idna==3.19
+inngest==0.5.19
+jcs==0.2.1
 Jinja2==3.1.6
 jiter==0.17.0
 markdown-it-py==4.2.0

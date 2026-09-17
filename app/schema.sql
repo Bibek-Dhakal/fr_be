@@ -4,6 +4,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     done BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'done', 'failed')),
+    processing BOOLEAN NOT NULL DEFAULT FALSE,
+    result TEXT,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO tasks (title, done)
 SELECT seed.title, seed.done
 FROM (

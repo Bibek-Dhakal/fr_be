@@ -49,3 +49,34 @@ runtime details are in the root [README](../../README.md).
 
 All four assignment histories are retained deliberately. Later stages extend
 or replace runtime components without deleting the earlier assignment record.
+
+## BE-06 - Inngest background reports
+
+This stage extends the PostgreSQL-backed API without changing the A2/A3/W4 or
+BE-07 routes. The Python Inngest lane is served at `/api/inngest`.
+
+- **Stage 0 - hello server:** retained the existing `GET /health` contract.
+- **Stage 1 - Inngest connected, first function runs:** added the `report-api`
+  client and `say-hello`, with an explicit five-second sleep step.
+- **Stage 2 - 202 + background job + status endpoint:** added
+  `POST /reports`, `report/requested`, the two-step `make-report` function,
+  PostgreSQL `reports` state, and `GET /reports/{id}`.
+- **Stage 3 - retries seen, bad input rejected:** configured `retries=2`,
+  made `fail` deterministic, and reject missing/blank topics with `400`.
+- **Stage 4 - cron heartbeat:** added `heartbeat` on `* * * * *`, logging
+  pending/done/failed counts, plus a concurrency limit of two.
+- **Stage 5 - publish and docs:** documented the Docker/Dev Server commands,
+  polling proof, retry/idempotency behavior, cron examples, limitations, and
+  local unittest/compile checks.
+
+The exact stage messages are preserved here: `Stage 0: hello server`;
+`Stage 1: Inngest connected, first function runs`; `Stage 2: 202 + background
+job + status endpoint`; `Stage 3: retries seen, bad input rejected`;
+`Stage 4: cron heartbeat`; `Stage 5: publish and docs`.
+
+Report state is durable in PostgreSQL and completion is guarded by
+`status = 'pending'`, so duplicate events are harmless. `fail` is retried by
+Inngest and ends failed after the initial attempt plus two retries.
+`REPORTS_IN_MEMORY=1` is test-only. Inngest Cloud deployment additionally
+requires its event key and signing configuration; local Dev Server operation
+requires neither.

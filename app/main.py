@@ -13,6 +13,10 @@ from app.llm.client import PROMPT_VERSION
 from app.llm.parse import parse_triage_output
 from app.llm.quarantine import quarantine_triage
 from app.llm.schema import TriageRequest, TriageResult
+from app.reports import functions as report_functions
+from app.reports import inngest_client, report_store
+from inngest.fast_api import serve as serve_inngest
+import inngest
 
 app = FastAPI(
     title="Task API",
@@ -230,6 +234,41 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/reports", status_code=status.HTTP_202_ACCEPTED, summary="Start Report")
+async def create_report(payload: dict):
+    topic = payload.get("topic")
+    if not isinstance(topic, str) or not topic.strip():
+        return JSONResponse(status_code=400, content={"error": "Topic is required"})
+
+    report = report_store.create(topic.strip())
+    if os.getenv("INNGEST_STUB") != "1":
+        try:
+            await inngest_client.send(
+                inngest.Event(
+                    name="report/requested",
+                    data={"id": report["id"], "topic": report["topic"]},
+                )
+            )
+        except Exception as error:
+            report_store.fail(report["id"], str(error))
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Unable to queue report"},
+            )
+    return {"id": report["id"], "status": report["status"]}
+
+
+@app.get("/reports/{report_id}", summary="Get Report Status")
+def get_report(report_id: str):
+    report = report_store.get(report_id)
+    if report is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Report {report_id} not found"},
+        )
+    return report
+
+
 @app.get("/tasks", summary="List Tasks")
 def get_tasks():
     """Returns the complete list of tasks from the repository."""
@@ -301,3 +340,6 @@ def delete_task(task_id: int):
             status_code=404, content={"error": f"Task {task_id} not found"}
         )
     return None
+
+
+serve_inngest(app, inngest_client, report_functions)

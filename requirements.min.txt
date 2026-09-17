@@ -4,3 +4,4 @@ pydantic
 psycopg[binary]
 supabase
 openai
+inngest

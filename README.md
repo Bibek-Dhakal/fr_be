@@ -16,6 +16,7 @@ Docker, and Supabase authentication features remain available.
 - Psycopg 3
 - Supabase Auth
 - Gemini through its OpenAI-compatible API
+- Inngest Python SDK for durable background jobs
 
 ## Configuration
 
@@ -63,6 +64,15 @@ docker compose up --build
 
 The API is available at [http://localhost:8000](http://localhost:8000), and
 Swagger UI is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+Start the local Inngest Dev Server in a second terminal:
+
+```powershell
+npx inngest-cli@latest dev -u http://localhost:8000/api/inngest
+```
+
+Its dashboard is available at [http://localhost:8288](http://localhost:8288).
+Local development requires no account, secret, or paid service.
 
 The `db` service uses the named `postgres_data` volume. The `app` service waits
 for PostgreSQL to become healthy before starting. `app/schema.sql` creates the
@@ -119,6 +129,9 @@ folders contain documentation only; they are not imported by the application.
 | Profile | `GET` | `/protected/profile` | Protected; verifies the bearer token |
 | Dashboard | `GET` | `/protected/dashboard` | Protected; verifies the bearer token |
 | Triage | `POST` | `/triage` | Classifies a support message with validated JSON |
+| Start report | `POST` | `/reports` | Validates a topic and queues a background report |
+| Report status | `GET` | `/reports/{id}` | Returns pending, done, or failed report state |
+| Inngest functions | `GET/POST/PUT` | `/api/inngest` | Inngest Dev Server integration |
 
 Unknown IDs return `404` with `{"error": "Task {id} not found"}`. Missing or
 empty titles return `400`.
@@ -198,6 +211,53 @@ bounded exponential backoff.
 
 Each model response writes prompt version, model, token counts, duration, and
 repair status to `logs/cost.jsonl`. The logs are ignored by Git.
+
+## BE-06 background reports
+
+`POST /reports` accepts `{"topic":"cats"}` and returns `202 Accepted` with an
+ID and `pending` status without doing slow work. `GET /reports/{id}` first
+returns `pending`, then `done` with a result, or `failed` with an error.
+Unknown IDs return `404`; missing or blank topics return `400` before an event
+is sent.
+
+| Function | Trigger | Behavior |
+| --- | --- | --- |
+| `say-hello` | `test/hello` | Five-second durable sleep and greeting |
+| `make-report` | `report/requested` | Eight-second sleep, build step, retries=2 |
+| `heartbeat` | `* * * * *` | Logs pending/done/failed counts every minute |
+
+`make-report` is limited to two concurrent runs. Its database update only
+transitions `pending` to `done`, so duplicate events cannot build the same
+report twice. This idempotency guard matters because delivery and worker
+retries can legitimately run a job more than once. A topic of `fail` raises
+`The report oven is broken!`, marks the report failed, and lets Inngest show
+the initial attempt plus two retries. Retries are for work failures; invalid
+input is rejected at the API boundary and is never retried.
+
+Report state is stored in PostgreSQL (`reports` table), so it survives an API
+restart. Tests and no-service local checks can set `REPORTS_IN_MEMORY=1`; this
+mode is intentionally non-durable and is not the Docker default:
+
+```powershell
+python -m unittest discover -s tests -v
+python -m compileall -q app
+```
+
+The expected proof is a fast response followed by polling:
+
+```text
+POST /reports {"topic":"cats"} -> 202 {"id":"...","status":"pending"}
+GET /reports/... -> {"id":"...","topic":"cats","status":"pending"}
+# after roughly 8-10 seconds
+GET /reports/... -> {"id":"...","topic":"cats","status":"done","result":"..."}
+```
+
+The cron expression `* * * * *` means every minute. For comparison,
+`0 8 * * *` means every day at 08:00, and `0 22 * * 0` means every Sunday at
+22:00. Check the server timezone before production use. A queue intentionally
+becoming slow is useful when concurrency must be bounded to protect a
+database or rate-limited provider: excess work waits instead of overwhelming
+the dependency.
 
 ## Evaluation
 

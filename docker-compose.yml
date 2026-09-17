@@ -24,6 +24,9 @@ services:
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_MODEL: ${LLM_MODEL}
       LLM_ENABLED: ${LLM_ENABLED:-true}
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-}
+      INNGEST_PRODUCTION: ${INNGEST_PRODUCTION:-false}
+      INNGEST_STUB: ${INNGEST_STUB:-false}
     ports:
       - "8000:8000"
     depends_on:
