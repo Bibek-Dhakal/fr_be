@@ -1,8 +1,11 @@
 import json
 import os
+import random
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from openai import OpenAI
+from openai import APIStatusError, APITimeoutError, OpenAI
 
 
 PROMPT_VERSION = "triage-v1"
@@ -17,6 +20,7 @@ def complete_triage(
     text: str,
     previous_output: str | None = None,
     validation_error: str | None = None,
+    repair: bool = False,
 ) -> str:
     client = OpenAI(
         base_url=os.environ["LLM_BASE_URL"],
@@ -32,15 +36,56 @@ def complete_triage(
             "Return only corrected JSON matching the schema."
         )
 
-    response = client.chat.completions.create(
-        model=os.environ["LLM_MODEL"],
-        messages=[
-            {"role": "system", "content": load_prompt()},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0,
-    )
-    content = response.choices[0].message.content
-    if not content:
-        raise ValueError("The model returned an empty response")
-    return content
+    model = os.environ["LLM_MODEL"]
+    for attempt in range(3):
+        started = time.perf_counter()
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": load_prompt()},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0,
+            )
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("The model returned an empty response")
+            usage = response.usage
+            _log_cost(
+                model=model,
+                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                repair=repair,
+            )
+            return content
+        except (APITimeoutError, APIStatusError) as error:
+            status_code = getattr(error, "status_code", None)
+            retryable = isinstance(error, APITimeoutError) or status_code == 429 or (
+                isinstance(status_code, int) and status_code >= 500
+            )
+            if not retryable or attempt == 2:
+                raise
+            time.sleep((2**attempt) + random.uniform(0, 0.25))
+
+
+def _log_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    duration_ms: int,
+    repair: bool,
+) -> None:
+    Path("logs").mkdir(exist_ok=True)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "prompt_version": PROMPT_VERSION,
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "duration_ms": duration_ms,
+        "repair": repair,
+    }
+    with Path("logs/cost.jsonl").open("a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(record) + "\n")

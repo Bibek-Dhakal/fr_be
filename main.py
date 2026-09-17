@@ -130,7 +130,7 @@ def triage(payload: dict):
             content={"error": f"Invalid field: {field}"},
         )
 
-    if os.getenv("LLM_STUB") == "1":
+    if os.getenv("LLM_ENABLED", "true").lower() == "false" or os.getenv("LLM_STUB") == "1":
         return TriageResult(
             category="other",
             urgency="normal",
@@ -146,6 +146,7 @@ def triage(payload: dict):
                 request.text,
                 previous_output=raw_output,
                 validation_error=str(first_error),
+                repair=True,
             )
             try:
                 return parse_triage_output(repaired_output)
