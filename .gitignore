@@ -35,3 +35,6 @@ tasks.db
 .env
 .env.*
 !.env.example
+
+# LLM runtime logs
+logs/
