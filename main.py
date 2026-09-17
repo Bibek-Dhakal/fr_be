@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from repository import PostgresTaskRepository
 from supabase_client import create_supabase_client
+from llm.client import complete_triage
 from llm.schema import TriageRequest, TriageResult
 
 app = FastAPI(
@@ -114,7 +115,7 @@ def login(payload: dict):
     }
 
 
-@app.post("/triage", response_model=TriageResult, summary="Triage Support Message")
+@app.post("/triage", summary="Triage Support Message")
 def triage(payload: dict):
     """Classifies a support message into a closed, validated result shape."""
     try:
@@ -133,10 +134,10 @@ def triage(payload: dict):
             confidence=0.1,
             reason="Stub mode is enabled; human review is required.",
         )
-    return JSONResponse(
-        status_code=503,
-        content={"error": "LLM integration is not enabled yet"},
-    )
+    try:
+        return {"raw_model_output": complete_triage(request.text)}
+    except Exception as error:
+        return JSONResponse(status_code=502, content={"error": str(error)})
 
 
 def extract_access_token(authorization: str | None) -> str | JSONResponse:
