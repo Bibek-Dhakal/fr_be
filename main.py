@@ -1,9 +1,13 @@
+import os
+
 from fastapi import Depends, FastAPI, Header, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from repository import PostgresTaskRepository
 from supabase_client import create_supabase_client
+from llm.schema import TriageRequest, TriageResult
 
 app = FastAPI(
     title="Task API",
@@ -108,6 +112,31 @@ def login(payload: dict):
         "access_token": response.session.access_token,
         "refresh_token": response.session.refresh_token,
     }
+
+
+@app.post("/triage", response_model=TriageResult, summary="Triage Support Message")
+def triage(payload: dict):
+    """Classifies a support message into a closed, validated result shape."""
+    try:
+        request = TriageRequest.model_validate(payload)
+    except ValidationError as error:
+        field = error.errors()[0].get("loc", ["field"])[0]
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Invalid field: {field}"},
+        )
+
+    if os.getenv("LLM_STUB") == "1":
+        return TriageResult(
+            category="other",
+            urgency="normal",
+            confidence=0.1,
+            reason="Stub mode is enabled; human review is required.",
+        )
+    return JSONResponse(
+        status_code=503,
+        content={"error": "LLM integration is not enabled yet"},
+    )
 
 
 def extract_access_token(authorization: str | None) -> str | JSONResponse:
