@@ -65,7 +65,7 @@ The API is available at [http://localhost:8000](http://localhost:8000), and
 Swagger UI is available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 The `db` service uses the named `postgres_data` volume. The `app` service waits
-for PostgreSQL to become healthy before starting. `schema.sql` creates the
+for PostgreSQL to become healthy before starting. `app/schema.sql` creates the
 `tasks` table and inserts the three example tasks only when the table is empty.
 
 Stop the stack without deleting data:
@@ -82,11 +82,19 @@ docker compose down -v
 
 ## A3 architecture
 
-The route handlers in `main.py` keep the same endpoint paths, request
+The route handlers in `app/main.py` keep the same endpoint paths, request
 validation, response shapes, and status codes as A2. They call the
-`PostgresTaskRepository` in `repository.py` instead of executing database
+`PostgresTaskRepository` in `app/repository.py` instead of executing database
 queries themselves. This is the storage swap required by the assignment:
 the service/API behavior stays stable while the repository changes.
+
+## Application layout
+
+Runtime Python modules live under `app/`, with the LLM package in
+`app/llm/`, its versioned prompt assets in `app/prompts/`, and the PostgreSQL
+initialization schema in `app/schema.sql`. Start the API with the
+`app.main:app` Uvicorn module path. The `evals/` directory is evaluation
+tooling rather than application runtime code.
 
 ## Endpoints
 
@@ -177,7 +185,7 @@ curl.exe -i -X POST http://localhost:8000/triage `
 ```
 
 Invalid input is rejected with `400` before a model call. Model output is
-parsed and validated against `llm/schema.py`; malformed output gets exactly one
+parsed and validated against `app/llm/schema.py`; malformed output gets exactly one
 repair attempt, then returns `422` and is written to
 `logs/quarantine.jsonl`. Model calls use a 30-second timeout, no SDK retries,
 and application retries only timeouts, `429`, and `5xx` responses with
@@ -240,6 +248,15 @@ The task remains because PostgreSQL data is stored in the `postgres_data`
 Docker volume. Do not use `docker compose down -v` during this persistence
 test because that deliberately removes the database.
 
+## BE-07 AI assignment stage summary
+
+- Stage 0: provider configuration and stub mode
+- Stage 1: triage endpoint, input validation, and output schema
+- Stage 2: versioned prompt asset and endpoint wiring
+- Stage 3: parsing, validation, one repair attempt, and quarantine
+- Stage 4: timeout, retry policy, cost logging, and kill switch
+- Stage 5: evaluation set, results, and publication
+
 ## W4 stage summary
 
 - Stage 0: Supabase client and environment configuration
@@ -249,6 +266,13 @@ test because that deliberately removes the database.
 - Stage 4: reusable auth dependency and logout
 - Stage 5: Swagger bearer authorization
 - Stage 6: this README and GitHub publication
+
+## A2 SQLite assignment history
+
+The original A2 implementation used SQLite and exposed the same public CRUD
+routes. The A3 repository preserves that API contract while replacing the
+storage layer with PostgreSQL; the original A2 artifacts and screenshots
+remain available in Git history.
 
 ## Previous A2 artifacts
 

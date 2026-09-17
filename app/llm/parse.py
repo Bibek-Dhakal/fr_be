@@ -2,7 +2,7 @@ import json
 
 from pydantic import ValidationError
 
-from llm.schema import TriageResult
+from app.llm.schema import TriageResult
 
 
 def parse_triage_output(raw_output: str) -> TriageResult:

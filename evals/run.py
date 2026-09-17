@@ -1,16 +1,15 @@
 import json
 import os
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
-
-from llm.parse import parse_triage_output
-from llm.client import complete_triage
+from app.llm.client import complete_triage
+from app.llm.parse import parse_triage_output
 
 
 def main() -> None:
-    cases = json.loads(Path("evals/cases.json").read_text(encoding="utf-8"))
+    cases = json.loads(
+        (Path(__file__).parent / "cases.json").read_text(encoding="utf-8")
+    )
     matched = 0
     failures: list[dict[str, str]] = []
 

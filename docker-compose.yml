@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tasks_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./app/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -20,6 +20,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://tasks_user:tasks_password@db:5432/tasks_db}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_KEY: ${SUPABASE_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_ENABLED: ${LLM_ENABLED:-true}
     ports:
       - "8000:8000"
     depends_on:

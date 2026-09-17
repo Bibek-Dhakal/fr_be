@@ -6,13 +6,13 @@ from pydantic import ValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import APITimeoutError
 
-from repository import PostgresTaskRepository
-from supabase_client import create_supabase_client
-from llm.client import complete_triage
-from llm.client import PROMPT_VERSION
-from llm.parse import parse_triage_output
-from llm.quarantine import quarantine_triage
-from llm.schema import TriageRequest, TriageResult
+from app.repository import PostgresTaskRepository
+from app.supabase_client import create_supabase_client
+from app.llm.client import complete_triage
+from app.llm.client import PROMPT_VERSION
+from app.llm.parse import parse_triage_output
+from app.llm.quarantine import quarantine_triage
+from app.llm.schema import TriageRequest, TriageResult
 
 app = FastAPI(
     title="Task API",
