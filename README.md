@@ -96,6 +96,11 @@ initialization schema in `app/schema.sql`. Start the API with the
 `app.main:app` Uvicorn module path. The `evals/` directory is evaluation
 tooling rather than application runtime code.
 
+Documentation is organized under `docs/`: assignment history and job-card
+materials are in [`docs/assignments/`](docs/assignments/), and interface and
+database evidence is in [`docs/screenshots/`](docs/screenshots/). These
+folders contain documentation only; they are not imported by the application.
+
 ## Endpoints
 
 | Operation | Method | Endpoint | Description |
@@ -271,10 +276,17 @@ test because that deliberately removes the database.
 
 The original A2 implementation used SQLite and exposed the same public CRUD
 routes. The A3 repository preserves that API contract while replacing the
-storage layer with PostgreSQL; the original A2 artifacts and screenshots
-remain available in Git history.
+storage layer with PostgreSQL. The complete historical stage record is
+maintained in [`docs/assignments/history.md`](docs/assignments/history.md);
+these prior assignment stages remain intentionally retained even though A2 is
+now historical.
 
-## Previous A2 artifacts
+## Documentation assets
 
-The repository retains the A2 SQLite artifacts and screenshots in Git history.
-The active A3 stack uses PostgreSQL and Docker Compose.
+- [BE-07 job card](docs/assignments/be-07-job-card.md)
+- [Swagger UI screenshot](docs/screenshots/swagger-screenshot.jpeg)
+- [Database browser screenshot](docs/screenshots/db-browser-screenshot.jpeg)
+
+The active stack uses PostgreSQL and Docker Compose. The screenshots document
+prior and current assignment evidence; they do not describe a second runtime
+or database configuration.
