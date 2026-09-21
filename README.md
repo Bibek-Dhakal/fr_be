@@ -7,7 +7,7 @@ from SQLite to a PostgreSQL repository.
 The project now includes a narrow AI workflow: `POST /triage` classifies one
 support message into a fixed, validated JSON result. The existing PostgreSQL,
 Docker, and Supabase authentication features remain available. It also includes a robust background jobs pipeline using
-Inngest and Playwright to generate PDF reports.
+Inngest and Playwright to generate PDF reports, as well as a dynamic AI workflow engine.
 
 ## Stack
 
@@ -19,7 +19,7 @@ Inngest and Playwright to generate PDF reports.
 - Gemini through its OpenAI-compatible API
 - Inngest Python SDK for durable background jobs
 - Playwright (Headless Chromium) for PDF rendering
-- SQLite (Dedicated dataset for PDF report generation)
+- SQLite (Dedicated dataset for PDF report generation and workflow state)
 
 ## Configuration
 
@@ -143,6 +143,8 @@ folders contain documentation only; they are not imported by the application.
 | Start PDF report  | `POST`         | `/pdf-reports`           | Queues generation of the sales PDF               |
 | PDF status        | `GET`          | `/pdf-reports/{id}`      | Returns PDF background queue status              |
 | Download PDF      | `GET`          | `/pdf-reports/{id}/file` | Returns the actual PDF file generated            |
+| Start AI Workflow | `POST`         | `/workflows`             | Submits nodes, edges, and input for AI graph     |
+| Workflow status   | `GET`          | `/workflows/{id}`        | Polling endpoint for real-time node execution    |
 | Inngest functions | `GET/POST/PUT` | `/api/inngest`           | Inngest Dev Server integration                   |
 
 Unknown IDs return `404` with `{"error": "Task {id} not found"}`. Missing or
@@ -234,59 +236,18 @@ returns `pending`, then `done` with a result, or `failed` with an error.
 Unknown IDs return `404`; missing or blank topics return `400` before an event
 is sent.
 
-| Function              | Trigger            | Behavior                                     |
-|-----------------------|--------------------|----------------------------------------------|
-| `say-hello`           | `test/hello`       | Five-second durable sleep and greeting       |
-| `make-report`         | `report/requested` | Eight-second sleep, build step, retries=2    |
-| `heartbeat`           | `* * * * *`        | Logs pending/done/failed counts every minute |
-| `generate-pdf-report` | `pdf/requested`    | Queries DB and renders HTML -> PDF           |
+| Function              | Trigger              | Behavior                                     |
+|-----------------------|----------------------|----------------------------------------------|
+| `say-hello`           | `test/hello`         | Five-second durable sleep and greeting       |
+| `make-report`         | `report/requested`   | Eight-second sleep, build step, retries=2    |
+| `heartbeat`           | `* * * * *`          | Logs pending/done/failed counts every minute |
+| `generate-pdf-report` | `pdf/requested`      | Queries DB and renders HTML -> PDF           |
+| `execute-workflow`    | `workflow/requested` | Evaluates AI decision nodes along a graph    |
 
 `make-report` is limited to two concurrent runs. Its database update only
 transitions `pending` to `done`, so duplicate events cannot build the same
 report twice. This idempotency guard matters because delivery and worker
-retries can legitimately run a job more than once. A topic of `fail` raises
-`The report oven is broken!`, marks the report failed, and lets Inngest show
-the initial attempt plus two retries. Retries are for work failures; invalid
-input is rejected at the API boundary and is never retried.
-
-### BE-06 Submission Deliverables
-
-**202 Response & Polling Proof:**
-
-```text
-(.venv) PS> curl -i -X POST http://localhost:8000/reports -H "Content-Type: application/json" -d '{"topic":"cats"}'
-HTTP/1.1 202 Accepted
-{"id":"f28a10f7-3fb4-4240-8c2f-4e981cd812c6", "status":"pending"}
-
-(.venv) PS> curl -i http://localhost:8000/reports/f28a10f7-3fb4-4240-8c2f-4e981cd812c6
-HTTP/1.1 200 OK
-{"id":"f28a10f7...","topic":"cats","status":"pending"}
-
-# Roughly 8-10 seconds later...
-(.venv) PS> curl -i http://localhost:8000/reports/f28a10f7-3fb4-4240-8c2f-4e981cd812c6
-HTTP/1.1 200 OK
-{"id":"f28a10f7...","topic":"cats","status":"done","result":"Report for cats: background work completed."}
-```
-
-* **Stage 3 (Validation vs. Retry):** Missing input gets a `400 Bad Request` and is rejected at the door because bad
-  data will never magically succeed on a retry. Background job retries are strictly reserved for temporary execution
-  failures (e.g., network drops or database timeouts).
-* **Stage 4 (Cron Expressions):**
-    * Running every day at 08:00: `0 8 * * *`
-    * Running every Sunday at 22:00: `0 22 * * 0`
-
-**Inngest Dashboard Screenshot:**
-![Inngest Dashboard Screenshot](docs/screenshots/inngest-dashboard.jpeg)
-
-**Bonus Stage 6: AI vs. Me:**
-
-* **Prompt used:** "Write a FastAPI app with Inngest to create a background job that sleeps for 8 seconds and returns a
-  report status. Include polling endpoints."
-* **What the AI did better:** It wrote out the Pydantic schemas for the requests much faster than writing them by hand.
-* **What it got wrong:** It missed the "accept fast" concept initially and tried to execute the `await inngest.send()`
-  *after* doing some mock validation sleeps, which defeats the purpose.
-* **What my prompt forgot:** I forgot to specify that the report states (`pending`, `done`) must be persisted to a
-  database (SQLite/Postgres), so the AI just used a global in-memory Python dictionary which wipes on server restart.
+retries can legitimately run a job more than once.
 
 ## BE-08 PDF Report Generator
 
@@ -295,71 +256,20 @@ logic (`query` -> `render` -> `store`) natively incorporates the BE-06 backgroun
 large HTML table inside a web request hangs the server; moving this slow work completely out of the request solves
 performance latency for clients waiting to do other actions.
 
-### BE-08 Submission Deliverables
+## BE-09 AI Workflow Execution
 
-**Dataset Chosen:**
+This stage introduces a visual AI workflow runner connected to a dedicated React frontend. The FastAPI backend exposes
+conditional logic endpoints (`POST /workflows`) that accept a serialized React Flow graph (nodes and edges) along with
+user input text.
 
-* **Option A — The Little Shop:** 200 randomly seeded orders with products, customer names, random amounts, and dates
-  within the last 30 days stored in `report.db` (SQLite).
+The execution is processed in the background using Inngest:
 
-**Pasted SQL Queries:**
-
-```sql
--- Total Orders
-SELECT COUNT(*)
-FROM orders;
-
--- Total Revenue
-SELECT SUM(amount)
-FROM orders;
-
--- Top 5 Products by Revenue
-SELECT product, SUM(amount) as rev
-FROM orders
-GROUP BY product
-ORDER BY rev DESC LIMIT 5;
-
--- Orders per day (Last 7 Days)
-SELECT date (created_at) as d, COUNT (*) as c
-FROM orders
-WHERE date (created_at) >= date ('now', '-7 days')
-GROUP BY d
-ORDER BY d;
-```
-
-**Generate & Download Proof:**
-
-```bash
-curl -i -X POST http://localhost:8000/pdf-reports
-```
-
-Then
-
-```bash
-curl -i -o my-report.pdf http://localhost:8000/pdf-reports/{id}/file
-```
-
-* **Stage 4 (Threshold for Background Jobs):** Report generation should be moved out of the synchronous HTTP request and
-  into a background job the moment the generation takes longer than ~1–2 seconds, preventing the server from keeping the
-  client hostage and avoiding browser timeouts.
-* **Stage 5 (Idempotency):** The once-per-day check protects against a user double-clicking the "Generate" button, which
-  would otherwise spin up multiple expensive headless browser instances and duplicate the 20MB file. In the real world,
-  a missing idempotency check on a checkout page could result in charging a customer's credit card twice for the same
-  single order.
-
-**PDF Report Screenshot:**
-![PDF Report Screenshot](docs/screenshots/pdf-report.jpeg)
-
-**Bonus Stage 7: AI vs. Me:**
-
-* **Prompt used:** "Write a FastAPI app with Playwright to generate a PDF report from a SQLite DB for store sales,
-  including page break protections."
-* **What the AI did better:** It instantly outputted nicely styled CSS classes for the Flexbox layout, making the
-  summary boxes look great out of the box.
-* **What it got wrong:** It returned the raw PDF bytes in the POST request rather than persisting it to disk and
-  returning an artifact link. It entirely skipped the critical "store and link" lesson.
-* **What my prompt forgot:** I forgot to explicitly instruct it about repeating table headers (`<thead>`), resulting in
-  the AI writing a standard `<table>` that would slice a data row exactly in half between page 1 and page 2.
+1. The background worker parses the provided graph and isolates the starting root node.
+2. The LLM evaluates the node's custom prompt against the user's text. The model is constrained to output exclusively
+   `YES` or `NO`.
+3. The engine uses the model's decision to route traversal across the exact matching edge to the next connected node.
+4. Active execution state, the currently processing node, and historical decision logs are written to SQLite and
+   streamed to the frontend for visualization.
 
 ## Evaluation
 
@@ -433,15 +343,6 @@ test because that deliberately removes the database.
 - Stage 4: reusable auth dependency and logout
 - Stage 5: Swagger bearer authorization
 - Stage 6: this README and GitHub publication
-
-## A2 SQLite assignment history
-
-The original A2 implementation used SQLite and exposed the same public CRUD
-routes. The A3 repository preserves that API contract while replacing the
-storage layer with PostgreSQL. The complete historical stage record is
-maintained in [`docs/assignments/history.md`](docs/assignments/history.md);
-these prior assignment stages remain intentionally retained even though A2 is
-now historical.
 
 ## Documentation assets
 

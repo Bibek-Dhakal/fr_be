@@ -1,31 +1,42 @@
+import json
 import os
 import sqlite3
 import uuid
 from datetime import datetime
 
-from fastapi import Depends, FastAPI, Header, Request, status
+import inngest
+from fastapi import Depends, FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
-from pydantic import ValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from inngest.fast_api import serve as serve_inngest
 from openai import APITimeoutError
+from pydantic import ValidationError
 
-from app.repository import PostgresTaskRepository
-from app.supabase_client import create_supabase_client
-from app.llm.client import complete_triage
 from app.llm.client import PROMPT_VERSION
+from app.llm.client import complete_triage
 from app.llm.parse import parse_triage_output
 from app.llm.quarantine import quarantine_triage
 from app.llm.schema import TriageRequest, TriageResult
 from app.reports import functions as report_functions
 from app.reports import inngest_client, report_store
-from inngest.fast_api import serve as serve_inngest
-import inngest
+from app.repository import PostgresTaskRepository
+from app.supabase_client import create_supabase_client
 
 app = FastAPI(
     title="Task API",
     description="A simple CRUD API managing a to-do list.",
     version="1.0",
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 repository = PostgresTaskRepository()
 supabase = None
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -44,17 +55,17 @@ def require_credentials(payload: dict) -> tuple[str, str] | JSONResponse:
     email = payload.get("email")
     password = payload.get("password")
     if (
-        not isinstance(email, str)
-        or not email.strip()
-        or not isinstance(password, str)
-        or not password
+            not isinstance(email, str)
+            or not email.strip()
+            or not isinstance(password, str)
+            or not password
     ):
         return auth_error("Email and password are required", 400)
     return email.strip(), password
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise AuthFailure("Access token required")
@@ -281,29 +292,29 @@ async def create_pdf_report(payload: dict | None = None):
     """
     force = payload.get("force", False) if payload else False
     today = datetime.now().strftime("%Y-%m-%d")
-    
+
     with sqlite3.connect("report.db") as conn:
         conn.row_factory = sqlite3.Row
         if not force:
             existing = conn.execute("SELECT id, status, file FROM pdf_reports WHERE date = ?", (today,)).fetchone()
             if existing:
                 return JSONResponse(status_code=200, content={
-                    "id": existing["id"], 
+                    "id": existing["id"],
                     "status": existing["status"],
                     "file": f"/pdf-reports/{existing['id']}/file" if existing["status"] == "done" else None
                 })
-        
+
         report_id = str(uuid.uuid4())
         conn.execute(
-            "INSERT INTO pdf_reports (id, date, status, created_at) VALUES (?, ?, ?, ?)", 
+            "INSERT INTO pdf_reports (id, date, status, created_at) VALUES (?, ?, ?, ?)",
             (report_id, today, "pending", datetime.now().isoformat())
         )
-        
+
     if os.getenv("INNGEST_STUB") != "1":
         await inngest_client.send(
             inngest.Event(name="pdf/requested", data={"id": report_id})
         )
-        
+
     return JSONResponse(status_code=202, content={"id": report_id, "status": "pending"})
 
 
@@ -326,16 +337,16 @@ def download_pdf_report(report_id: str):
     with sqlite3.connect("report.db") as conn:
         conn.row_factory = sqlite3.Row
         report = conn.execute("SELECT status, file FROM pdf_reports WHERE id = ?", (report_id,)).fetchone()
-        
+
         if not report or report["status"] != "done" or not report["file"]:
             return JSONResponse(status_code=404, content={"error": "File not ready or not found"})
-            
+
         if not os.path.exists(report["file"]):
             return JSONResponse(status_code=404, content={"error": "File missing on disk"})
-            
+
         return FileResponse(
-            path=report["file"], 
-            media_type="application/pdf", 
+            path=report["file"],
+            media_type="application/pdf",
             filename=f"sales-report-{report_id[:8]}.pdf"
         )
 
@@ -411,6 +422,62 @@ def delete_task(task_id: int):
             status_code=404, content={"error": f"Task {task_id} not found"}
         )
     return None
+
+
+@app.post("/workflows", status_code=status.HTTP_202_ACCEPTED, summary="Start AI Workflow")
+async def create_workflow(payload: dict):
+    with sqlite3.connect("report.db") as conn:
+        conn.execute("""
+                     CREATE TABLE IF NOT EXISTS workflows
+                     (
+                         id
+                         TEXT
+                         PRIMARY
+                         KEY,
+                         status
+                         TEXT,
+                         current_node
+                         TEXT,
+                         logs
+                         TEXT,
+                         created_at
+                         TEXT
+                     )
+                     """)
+        wf_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO workflows (id, status, current_node, logs, created_at) VALUES (?, ?, ?, ?, ?)",
+            (wf_id, "pending", None, "[]", datetime.now().isoformat())
+        )
+
+    if os.getenv("INNGEST_STUB") != "1":
+        await inngest_client.send(
+            inngest.Event(
+                name="workflow/requested",
+                data={
+                    "id": wf_id,
+                    "nodes": payload.get("nodes", []),
+                    "edges": payload.get("edges", []),
+                    "input": payload.get("input", "")
+                }
+            )
+        )
+    return {"id": wf_id, "status": "pending"}
+
+
+@app.get("/workflows/{wf_id}", summary="Get Workflow Status")
+def get_workflow(wf_id: str):
+    with sqlite3.connect("report.db") as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM workflows WHERE id = ?", (wf_id,)).fetchone()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Not found"})
+        return {
+            "id": row["id"],
+            "status": row["status"],
+            "current_node": row["current_node"],
+            "logs": json.loads(row["logs"]) if row["logs"] else []
+        }
 
 
 serve_inngest(app, inngest_client, report_functions)
