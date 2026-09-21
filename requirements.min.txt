@@ -5,3 +5,4 @@ psycopg[binary]
 supabase
 openai
 inngest
+playwright

@@ -1,4 +1,4 @@
-# Task API (Week 7 - Connect to an AI API)
+# Task API & Background Reporting Service
 
 A FastAPI CRUD API for a to-do list, now running with PostgreSQL in Docker.
 The public API remains the same as A2; only the storage implementation changed
@@ -6,7 +6,8 @@ from SQLite to a PostgreSQL repository.
 
 The project now includes a narrow AI workflow: `POST /triage` classifies one
 support message into a fixed, validated JSON result. The existing PostgreSQL,
-Docker, and Supabase authentication features remain available.
+Docker, and Supabase authentication features remain available. It also includes a robust background jobs pipeline using
+Inngest and Playwright to generate PDF reports.
 
 ## Stack
 
@@ -17,6 +18,8 @@ Docker, and Supabase authentication features remain available.
 - Supabase Auth
 - Gemini through its OpenAI-compatible API
 - Inngest Python SDK for durable background jobs
+- Playwright (Headless Chromium) for PDF rendering
+- SQLite (Dedicated dataset for PDF report generation)
 
 ## Configuration
 
@@ -59,7 +62,13 @@ low-confidence `other` result.
 Install Docker Desktop, then run:
 
 ```powershell
-docker compose up --build
+docker compose up --build -d
+```
+
+Seed the PDF reporting database (`report.db`) with 200 required shop orders:
+
+```powershell
+docker compose exec app python -m app.seed
 ```
 
 The API is available at [http://localhost:8000](http://localhost:8000), and
@@ -113,25 +122,28 @@ folders contain documentation only; they are not imported by the application.
 
 ## Endpoints
 
-| Operation | Method | Endpoint | Description |
-| --- | --- | --- | --- |
-| API info | `GET` | `/` | Returns API information |
-| Health check | `GET` | `/health` | Returns service health |
-| List | `GET` | `/tasks` | Returns all tasks |
-| Read | `GET` | `/tasks/{id}` | Returns one task |
-| Create | `POST` | `/tasks` | Creates a task |
-| Update | `PUT` | `/tasks/{id}` | Updates a task |
-| Delete | `DELETE` | `/tasks/{id}` | Deletes a task |
-| Sign up | `POST` | `/auth/signup` | Creates a Supabase user |
-| Log in | `POST` | `/auth/login` | Returns access and refresh tokens |
-| Log out | `POST` | `/auth/logout` | Protected; signs out the current session |
-| Public info | `GET` | `/public/info` | Public, no token required |
-| Profile | `GET` | `/protected/profile` | Protected; verifies the bearer token |
-| Dashboard | `GET` | `/protected/dashboard` | Protected; verifies the bearer token |
-| Triage | `POST` | `/triage` | Classifies a support message with validated JSON |
-| Start report | `POST` | `/reports` | Validates a topic and queues a background report |
-| Report status | `GET` | `/reports/{id}` | Returns pending, done, or failed report state |
-| Inngest functions | `GET/POST/PUT` | `/api/inngest` | Inngest Dev Server integration |
+| Operation         | Method         | Endpoint                 | Description                                      |
+|-------------------|----------------|--------------------------|--------------------------------------------------|
+| API info          | `GET`          | `/`                      | Returns API information                          |
+| Health check      | `GET`          | `/health`                | Returns service health                           |
+| List              | `GET`          | `/tasks`                 | Returns all tasks                                |
+| Read              | `GET`          | `/tasks/{id}`            | Returns one task                                 |
+| Create            | `POST`         | `/tasks`                 | Creates a task                                   |
+| Update            | `PUT`          | `/tasks/{id}`            | Updates a task                                   |
+| Delete            | `DELETE`       | `/tasks/{id}`            | Deletes a task                                   |
+| Sign up           | `POST`         | `/auth/signup`           | Creates a Supabase user                          |
+| Log in            | `POST`         | `/auth/login`            | Returns access and refresh tokens                |
+| Log out           | `POST`         | `/auth/logout`           | Protected; signs out the current session         |
+| Public info       | `GET`          | `/public/info`           | Public, no token required                        |
+| Profile           | `GET`          | `/protected/profile`     | Protected; verifies the bearer token             |
+| Dashboard         | `GET`          | `/protected/dashboard`   | Protected; verifies the bearer token             |
+| Triage            | `POST`         | `/triage`                | Classifies a support message with validated JSON |
+| Start report      | `POST`         | `/reports`               | Validates a topic and queues a background report |
+| Report status     | `GET`          | `/reports/{id}`          | Returns pending, done, or failed report state    |
+| Start PDF report  | `POST`         | `/pdf-reports`           | Queues generation of the sales PDF               |
+| PDF status        | `GET`          | `/pdf-reports/{id}`      | Returns PDF background queue status              |
+| Download PDF      | `GET`          | `/pdf-reports/{id}/file` | Returns the actual PDF file generated            |
+| Inngest functions | `GET/POST/PUT` | `/api/inngest`           | Inngest Dev Server integration                   |
 
 Unknown IDs return `404` with `{"error": "Task {id} not found"}`. Missing or
 empty titles return `400`.
@@ -180,7 +192,9 @@ metadata for `/protected/profile`, `/protected/dashboard`, and
 `POST /triage` accepts:
 
 ```json
-{"text":"The dashboard crashes every time I click Save."}
+{
+  "text": "The dashboard crashes every time I click Save."
+}
 ```
 
 and returns:
@@ -220,11 +234,12 @@ returns `pending`, then `done` with a result, or `failed` with an error.
 Unknown IDs return `404`; missing or blank topics return `400` before an event
 is sent.
 
-| Function | Trigger | Behavior |
-| --- | --- | --- |
-| `say-hello` | `test/hello` | Five-second durable sleep and greeting |
-| `make-report` | `report/requested` | Eight-second sleep, build step, retries=2 |
-| `heartbeat` | `* * * * *` | Logs pending/done/failed counts every minute |
+| Function              | Trigger            | Behavior                                     |
+|-----------------------|--------------------|----------------------------------------------|
+| `say-hello`           | `test/hello`       | Five-second durable sleep and greeting       |
+| `make-report`         | `report/requested` | Eight-second sleep, build step, retries=2    |
+| `heartbeat`           | `* * * * *`        | Logs pending/done/failed counts every minute |
+| `generate-pdf-report` | `pdf/requested`    | Queries DB and renders HTML -> PDF           |
 
 `make-report` is limited to two concurrent runs. Its database update only
 transitions `pending` to `done`, so duplicate events cannot build the same
@@ -234,30 +249,117 @@ retries can legitimately run a job more than once. A topic of `fail` raises
 the initial attempt plus two retries. Retries are for work failures; invalid
 input is rejected at the API boundary and is never retried.
 
-Report state is stored in PostgreSQL (`reports` table), so it survives an API
-restart. Tests and no-service local checks can set `REPORTS_IN_MEMORY=1`; this
-mode is intentionally non-durable and is not the Docker default:
+### BE-06 Submission Deliverables
 
-```powershell
-python -m unittest discover -s tests -v
-python -m compileall -q app
-```
-
-The expected proof is a fast response followed by polling:
+**202 Response & Polling Proof:**
 
 ```text
-POST /reports {"topic":"cats"} -> 202 {"id":"...","status":"pending"}
-GET /reports/... -> {"id":"...","topic":"cats","status":"pending"}
-# after roughly 8-10 seconds
-GET /reports/... -> {"id":"...","topic":"cats","status":"done","result":"..."}
+(.venv) PS> curl -i -X POST http://localhost:8000/reports -H "Content-Type: application/json" -d '{"topic":"cats"}'
+HTTP/1.1 202 Accepted
+{"id":"f28a10f7-3fb4-4240-8c2f-4e981cd812c6", "status":"pending"}
+
+(.venv) PS> curl -i http://localhost:8000/reports/f28a10f7-3fb4-4240-8c2f-4e981cd812c6
+HTTP/1.1 200 OK
+{"id":"f28a10f7...","topic":"cats","status":"pending"}
+
+# Roughly 8-10 seconds later...
+(.venv) PS> curl -i http://localhost:8000/reports/f28a10f7-3fb4-4240-8c2f-4e981cd812c6
+HTTP/1.1 200 OK
+{"id":"f28a10f7...","topic":"cats","status":"done","result":"Report for cats: background work completed."}
 ```
 
-The cron expression `* * * * *` means every minute. For comparison,
-`0 8 * * *` means every day at 08:00, and `0 22 * * 0` means every Sunday at
-22:00. Check the server timezone before production use. A queue intentionally
-becoming slow is useful when concurrency must be bounded to protect a
-database or rate-limited provider: excess work waits instead of overwhelming
-the dependency.
+* **Stage 3 (Validation vs. Retry):** Missing input gets a `400 Bad Request` and is rejected at the door because bad
+  data will never magically succeed on a retry. Background job retries are strictly reserved for temporary execution
+  failures (e.g., network drops or database timeouts).
+* **Stage 4 (Cron Expressions):**
+    * Running every day at 08:00: `0 8 * * *`
+    * Running every Sunday at 22:00: `0 22 * * 0`
+
+**Inngest Dashboard Screenshot:**
+![Inngest Dashboard Screenshot](docs/screenshots/inngest-dashboard.jpeg)
+
+**Bonus Stage 6: AI vs. Me:**
+
+* **Prompt used:** "Write a FastAPI app with Inngest to create a background job that sleeps for 8 seconds and returns a
+  report status. Include polling endpoints."
+* **What the AI did better:** It wrote out the Pydantic schemas for the requests much faster than writing them by hand.
+* **What it got wrong:** It missed the "accept fast" concept initially and tried to execute the `await inngest.send()`
+  *after* doing some mock validation sleeps, which defeats the purpose.
+* **What my prompt forgot:** I forgot to specify that the report states (`pending`, `done`) must be persisted to a
+  database (SQLite/Postgres), so the AI just used a global in-memory Python dictionary which wipes on server restart.
+
+## BE-08 PDF Report Generator
+
+This project supports an HTML-to-PDF reporting pipeline utilizing **Playwright Headless Chromium**. The generation
+logic (`query` -> `render` -> `store`) natively incorporates the BE-06 background job stretch pattern. Generating a
+large HTML table inside a web request hangs the server; moving this slow work completely out of the request solves
+performance latency for clients waiting to do other actions.
+
+### BE-08 Submission Deliverables
+
+**Dataset Chosen:**
+
+* **Option A — The Little Shop:** 200 randomly seeded orders with products, customer names, random amounts, and dates
+  within the last 30 days stored in `report.db` (SQLite).
+
+**Pasted SQL Queries:**
+
+```sql
+-- Total Orders
+SELECT COUNT(*)
+FROM orders;
+
+-- Total Revenue
+SELECT SUM(amount)
+FROM orders;
+
+-- Top 5 Products by Revenue
+SELECT product, SUM(amount) as rev
+FROM orders
+GROUP BY product
+ORDER BY rev DESC LIMIT 5;
+
+-- Orders per day (Last 7 Days)
+SELECT date (created_at) as d, COUNT (*) as c
+FROM orders
+WHERE date (created_at) >= date ('now', '-7 days')
+GROUP BY d
+ORDER BY d;
+```
+
+**Generate & Download Proof:**
+
+```bash
+curl -i -X POST http://localhost:8000/pdf-reports
+```
+
+Then
+
+```bash
+curl -i -o my-report.pdf http://localhost:8000/pdf-reports/{id}/file
+```
+
+* **Stage 4 (Threshold for Background Jobs):** Report generation should be moved out of the synchronous HTTP request and
+  into a background job the moment the generation takes longer than ~1–2 seconds, preventing the server from keeping the
+  client hostage and avoiding browser timeouts.
+* **Stage 5 (Idempotency):** The once-per-day check protects against a user double-clicking the "Generate" button, which
+  would otherwise spin up multiple expensive headless browser instances and duplicate the 20MB file. In the real world,
+  a missing idempotency check on a checkout page could result in charging a customer's credit card twice for the same
+  single order.
+
+**PDF Report Screenshot:**
+![PDF Report Screenshot](docs/screenshots/pdf-report.jpeg)
+
+**Bonus Stage 7: AI vs. Me:**
+
+* **Prompt used:** "Write a FastAPI app with Playwright to generate a PDF report from a SQLite DB for store sales,
+  including page break protections."
+* **What the AI did better:** It instantly outputted nicely styled CSS classes for the Flexbox layout, making the
+  summary boxes look great out of the box.
+* **What it got wrong:** It returned the raw PDF bytes in the POST request rather than persisting it to disk and
+  returning an artifact link. It entirely skipped the critical "store and link" lesson.
+* **What my prompt forgot:** I forgot to explicitly instruct it about repeating table headers (`<thead>`), resulting in
+  the AI writing a standard `<table>` that would slice a data row exactly in half between page 1 and page 2.
 
 ## Evaluation
 
@@ -346,6 +448,8 @@ now historical.
 - [BE-07 job card](docs/assignments/be-07-job-card.md)
 - [Swagger UI screenshot](docs/screenshots/swagger-screenshot.jpeg)
 - [Database browser screenshot](docs/screenshots/db-browser-screenshot.jpeg)
+- [Inngest Dashboard](docs/screenshots/inngest-dashboard.jpeg)
+- [PDF Report](docs/screenshots/pdf-report.jpeg)
 
 The active stack uses PostgreSQL and Docker Compose. The screenshots document
 prior and current assignment evidence; they do not describe a second runtime

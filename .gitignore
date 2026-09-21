@@ -30,6 +30,7 @@ PATCH.md
 
 # Database
 tasks.db
+report.db
 
 # Environment
 .env
@@ -38,3 +39,6 @@ tasks.db
 
 # LLM runtime logs
 logs/
+
+# Reports output dir
+reports/

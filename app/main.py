@@ -1,7 +1,10 @@
 import os
+import sqlite3
+import uuid
+from datetime import datetime
 
 from fastapi import Depends, FastAPI, Header, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import ValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from openai import APITimeoutError
@@ -267,6 +270,74 @@ def get_report(report_id: str):
             content={"error": f"Report {report_id} not found"},
         )
     return report
+
+
+@app.post("/pdf-reports", summary="Generate PDF Report")
+async def create_pdf_report(payload: dict | None = None):
+    """
+    Generates a PDF report. Idempotent per day.
+    If generated today, it returns the existing report's link and a 200 response.
+    Pass `{"force": true}` to bypass idempotency.
+    """
+    force = payload.get("force", False) if payload else False
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    with sqlite3.connect("report.db") as conn:
+        conn.row_factory = sqlite3.Row
+        if not force:
+            existing = conn.execute("SELECT id, status, file FROM pdf_reports WHERE date = ?", (today,)).fetchone()
+            if existing:
+                return JSONResponse(status_code=200, content={
+                    "id": existing["id"], 
+                    "status": existing["status"],
+                    "file": f"/pdf-reports/{existing['id']}/file" if existing["status"] == "done" else None
+                })
+        
+        report_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO pdf_reports (id, date, status, created_at) VALUES (?, ?, ?, ?)", 
+            (report_id, today, "pending", datetime.now().isoformat())
+        )
+        
+    if os.getenv("INNGEST_STUB") != "1":
+        await inngest_client.send(
+            inngest.Event(name="pdf/requested", data={"id": report_id})
+        )
+        
+    return JSONResponse(status_code=202, content={"id": report_id, "status": "pending"})
+
+
+@app.get("/pdf-reports/{report_id}", summary="Get PDF Report Status")
+def get_pdf_report_status(report_id: str):
+    with sqlite3.connect("report.db") as conn:
+        conn.row_factory = sqlite3.Row
+        report = conn.execute("SELECT id, status, file FROM pdf_reports WHERE id = ?", (report_id,)).fetchone()
+        if not report:
+            return JSONResponse(status_code=404, content={"error": "Report not found"})
+        return {
+            "id": report["id"],
+            "status": report["status"],
+            "file": f"/pdf-reports/{report['id']}/file" if report["status"] == "done" else None
+        }
+
+
+@app.get("/pdf-reports/{report_id}/file", summary="Download PDF File")
+def download_pdf_report(report_id: str):
+    with sqlite3.connect("report.db") as conn:
+        conn.row_factory = sqlite3.Row
+        report = conn.execute("SELECT status, file FROM pdf_reports WHERE id = ?", (report_id,)).fetchone()
+        
+        if not report or report["status"] != "done" or not report["file"]:
+            return JSONResponse(status_code=404, content={"error": "File not ready or not found"})
+            
+        if not os.path.exists(report["file"]):
+            return JSONResponse(status_code=404, content={"error": "File missing on disk"})
+            
+        return FileResponse(
+            path=report["file"], 
+            media_type="application/pdf", 
+            filename=f"sales-report-{report_id[:8]}.pdf"
+        )
 
 
 @app.get("/tasks", summary="List Tasks")

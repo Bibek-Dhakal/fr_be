@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import timedelta
@@ -147,9 +148,15 @@ class ReportStore:
 
 
 report_store = ReportStore()
+
+# Ensure event_key is never an empty string, which causes URL resolution issues locally
+event_key = os.getenv("INNGEST_EVENT_KEY")
+if not event_key:
+    event_key = "local"
+
 inngest_client = inngest.Inngest(
     app_id="report-api",
-    event_key=os.getenv("INNGEST_EVENT_KEY"),
+    event_key=event_key,
     is_production=os.getenv("INNGEST_PRODUCTION", "false").lower() == "true",
 )
 
@@ -219,4 +226,32 @@ async def heartbeat(_ctx: inngest.Context) -> dict[str, int]:
     return counts
 
 
-functions = [say_hello, make_report, heartbeat]
+@inngest_client.create_function(
+    fn_id="generate-pdf-report",
+    name="generate-pdf-report",
+    trigger=inngest.TriggerEvent(event="pdf/requested"),
+)
+async def generate_pdf_report(ctx: inngest.Context) -> dict[str, Any]:
+    report_id = str(ctx.event.data["id"])
+    
+    async def _do_render() -> str:
+        from app.pdf_generator import get_report_data, render_pdf
+        data = get_report_data()
+        path = f"reports/{report_id}.pdf"
+        await render_pdf(data, path)
+        return path
+        
+    file_path = await ctx.step.run("render-pdf", _do_render)
+    
+    def _update_db() -> None:
+        with sqlite3.connect("report.db") as conn:
+            conn.execute(
+                "UPDATE pdf_reports SET status = 'done', file = ? WHERE id = ?", 
+                (file_path, report_id)
+            )
+            
+    await ctx.step.run("update-db", _update_db)
+    return {"id": report_id, "status": "done"}
+
+
+functions = [say_hello, make_report, heartbeat, generate_pdf_report]

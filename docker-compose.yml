@@ -24,9 +24,12 @@ services:
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_MODEL: ${LLM_MODEL}
       LLM_ENABLED: ${LLM_ENABLED:-true}
-      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-}
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-local}
       INNGEST_PRODUCTION: ${INNGEST_PRODUCTION:-false}
       INNGEST_STUB: ${INNGEST_STUB:-false}
+      INNGEST_BASE_URL: ${INNGEST_BASE_URL:-http://host.docker.internal:8288}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     depends_on:
